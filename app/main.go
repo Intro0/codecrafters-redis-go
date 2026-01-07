@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"strings"
+	"io"
 )
 
 // Ensures gofmt doesn't remove the "net" and "os" imports in stage 1 (feel free to remove this!)
@@ -34,11 +36,24 @@ func main() {
 func handleConnection(conn net.Conn) {
 	for {
 		buf:=make([]byte, 1024)
-		_,err := conn.Read(buf)
+		n,err := conn.Read(buf)
 		if err != nil {
+			if err == io.EOF {
+				break
+			}
 			fmt.Println("Error reading from connection: ", err.Error())
 			break
 		}
-		conn.Write([]byte("+PONG\r\n"))
+		parts := strings.Split(string(buf[:n]),"\r\n")
+		switch strings.ToLower(parts[2]) {
+			case "ping":
+				conn.Write([]byte("+PONG\r\n"))
+			case "echo":
+				input := parts[4]
+				response := fmt.Sprintf("$%d\r\n%s\r\n", len(input), input)
+				conn.Write([]byte(response))
+			default:
+				fmt.Println("Unknown Syntax")
+		}
 	}
 }
