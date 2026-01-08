@@ -2,16 +2,23 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"net"
 	"os"
+	"strconv"
 	"strings"
-	"io"
+	"time"
 )
+
+type Entry struct {
+		value string
+		expiry time.Time
+	}
 
 func main() {
 
 	// storage
-	storage := make(map[string]string)
+	storage := make(map[string]Entry)
 
 	// listener
 	l, err := net.Listen("tcp", "0.0.0.0:6379")
@@ -33,7 +40,7 @@ func main() {
 }
 
 // handles one client
-func handleConnection(conn net.Conn,storage map[string]string) {
+func handleConnection(conn net.Conn,storage map[string]Entry) {
 	for {
 		buf:=make([]byte, 1024)
 		n,err := conn.Read(buf)
@@ -55,18 +62,43 @@ func handleConnection(conn net.Conn,storage map[string]string) {
 				response := fmt.Sprintf("$%d\r\n%s\r\n", len(input), input)
 				conn.Write([]byte(response))
 			case "set":
+				expiry := time.Time{}
+				if len(parts) > 9 {
+					switch strings.ToUpper(parts[8]) {
+						case "PX":
+							ms,err := strconv.Atoi(parts[10])
+							if err != nil {
+								fmt.Println("Error with PX: ", err.Error())
+							}
+							expiry = time.Now().Add(time.Duration(ms) * time.Millisecond)
+						case "EX":
+							s,err := strconv.Atoi(parts[10])
+							if err != nil {
+								fmt.Println("Error with PX: ", err.Error())
+							}
+							expiry = time.Now().Add(time.Duration(s) * time.Second)
+						default:
+							fmt.Println("invalid syntax")
+					}
+				}
 				key := parts[4]
 				value := parts[6]
-				storage[key] = value
+				storage[key] = Entry{value:value,expiry:expiry}
 				conn.Write([]byte("+OK\r\n"))
 			case "get":
 				key := parts[4]
 				input,ok := storage[key]
 				if !ok {
 					fmt.Println("value not found")
+					conn.Write([]byte("$-1\r\n"))
 					continue
 				}
-				response := fmt.Sprintf("$%d\r\n%s\r\n", len(input), input)
+				if !input.expiry.IsZero() && time.Now().After(input.expiry) {
+					fmt.Println("value expired")
+					conn.Write([]byte("$-1\r\n"))
+					continue
+				}
+				response := fmt.Sprintf("$%d\r\n%s\r\n", len(input.value), input.value)
 				conn.Write([]byte(response))
 			default:
 				fmt.Println("Unknown Syntax")
