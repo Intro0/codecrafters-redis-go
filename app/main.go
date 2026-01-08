@@ -100,6 +100,16 @@ func handleConnection(conn net.Conn,storage map[string]Entry) {
 				}
 				response := fmt.Sprintf("$%d\r\n%s\r\n", len(input.value), input.value)
 				conn.Write([]byte(response))
+			case "type":
+				key := parts[4]
+				_,ok := storage[key]
+				if !ok {
+					fmt.Println("key not found")
+					conn.Write([]byte("+none\r\n"))
+					continue
+				}
+				conn.Write([]byte("+string\r\n"))
+
 			default:
 				fmt.Println("Unknown Syntax")
 		}
