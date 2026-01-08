@@ -10,15 +10,32 @@ import (
 	"time"
 )
 
-type Entry struct {
+type Value interface {
+	Type() string
+}
+
+type StringEntry struct {
 		value string
 		expiry time.Time
 	}
 
+func (e StringEntry) Type() string { return "string" }
+
+type StreamEntry struct {
+	id string
+	values map[string]string
+}
+
+type Stream struct {
+	entries []StreamEntry
+}
+
+func (s Stream) Type() string { return "stream" }
+
 func main() {
 
 	// storage
-	storage := make(map[string]Entry)
+	storage := make(map[string]Value)
 
 	// listener
 	l, err := net.Listen("tcp", "0.0.0.0:6379")
@@ -40,7 +57,7 @@ func main() {
 }
 
 // handles one client
-func handleConnection(conn net.Conn,storage map[string]Entry) {
+func handleConnection(conn net.Conn,storage map[string]Value) {
 	for {
 		buf:=make([]byte, 1024)
 		n,err := conn.Read(buf)
@@ -83,13 +100,18 @@ func handleConnection(conn net.Conn,storage map[string]Entry) {
 				}
 				key := parts[4]
 				value := parts[6]
-				storage[key] = Entry{value:value,expiry:expiry}
+				storage[key] = StringEntry{value:value,expiry:expiry}
 				conn.Write([]byte("+OK\r\n"))
 			case "get":
 				key := parts[4]
-				input,ok := storage[key]
+				val,ok := storage[key]
 				if !ok {
 					fmt.Println("value not found")
+					conn.Write([]byte("$-1\r\n"))
+					continue
+				}
+				input,ok := val.(StringEntry)
+				if !ok {
 					conn.Write([]byte("$-1\r\n"))
 					continue
 				}
@@ -102,14 +124,31 @@ func handleConnection(conn net.Conn,storage map[string]Entry) {
 				conn.Write([]byte(response))
 			case "type":
 				key := parts[4]
-				_,ok := storage[key]
+				val,ok := storage[key]
 				if !ok {
 					fmt.Println("key not found")
 					conn.Write([]byte("+none\r\n"))
 					continue
 				}
-				conn.Write([]byte("+string\r\n"))
-
+				conn.Write([]byte("+" + val.Type() + "\r\n"))
+			case "xadd":
+				key := parts[4]
+				id := parts[6]
+				values := make(map[string]string)
+				for i := 8; i+2 < len(parts); i+=4 {
+					values[parts[i]] = parts[i+2]
+				}
+				entry := StreamEntry{id: id, values: values}
+				val,ok := storage[key]
+				if !ok {
+					storage[key] = Stream{entries: []StreamEntry{entry}}
+				} else {
+					stream := val.(Stream)
+					stream.entries = append(stream.entries, entry)
+					storage[key] = stream
+				}
+				response := fmt.Sprintf("$%d\r\n%s\r\n", len(id), id)
+				conn.Write([]byte(response))
 			default:
 				fmt.Println("Unknown Syntax")
 		}
